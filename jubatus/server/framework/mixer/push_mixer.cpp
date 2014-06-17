@@ -214,6 +214,7 @@ push_mixer::push_mixer(
       mix_count_(0),
       ticktime_(get_clock_time()),
       is_running_(false),
+      is_obsolete_(true),
       t_(jubatus::util::lang::bind(&push_mixer::mixer_loop, this)),
       model_mutex_(mutex) {
 }
@@ -241,6 +242,7 @@ void push_mixer::set_driver(core::driver::driver_base* driver) {
 void push_mixer::start() {
   scoped_lock lk(m_);
   if (!is_running_) {
+    mix();
     is_running_ = true;
     t_.start();
   }
@@ -303,6 +305,11 @@ void push_mixer::mixer_loop() {
       }
 
       c_.wait(m_, 0.5);
+
+      if (!is_running_) {
+        return;
+      }
+
       clock_time new_ticktime = get_clock_time();
       if ((0 < count_threshold_ &&  counter_ >= count_threshold_)
           || (0 < tick_threshold_ && new_ticktime - ticktime_ > tick_threshold_)
@@ -332,6 +339,7 @@ void push_mixer::mix() {
   if (servers_size == 0) {
     LOG(WARNING) << "no server exists, skipping mix";
     communication_->register_active_list();
+    is_obsolete_ = false;
     return;
   } else {
     try {
@@ -369,7 +377,6 @@ void push_mixer::mix() {
           continue;
         }
         push(her_diff);
-        communication_->register_active_list();
 
         // count size
         s_pull += her_diff.via.raw.size;
@@ -381,6 +388,11 @@ void push_mixer::mix() {
     } catch (const std::exception& e) {
       LOG(WARNING) << "error in mix process: " << e.what();
       return;
+    }
+
+    if (is_obsolete_) {
+      communication_->register_active_list();
+      is_obsolete_ = false;
     }
   }
 
@@ -452,7 +464,7 @@ int push_mixer::push(const msgpack::object& diff_obj) {
   packer pk(jp);
 
   mixable->push(diff);
-  communication_->register_active_list();
+  //communication_->register_active_list();
 
   counter_ = 0;
   ticktime_ = get_clock_time();
